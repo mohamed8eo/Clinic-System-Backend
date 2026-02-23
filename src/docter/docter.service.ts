@@ -440,6 +440,186 @@ export class DocterService {
   }
 
   // ============================================
+  // GET ALL PATIENTS
+  // ============================================
+  async getPatients(doctorId: number) {
+    const patients = await this.db.query(
+      `SELECT DISTINCT ON (p.id)
+        p.id,
+        p.full_name,
+        p.email,
+        p.phone,
+        p.gender,
+        p.date_of_birth,
+        p.address,
+        COUNT(a.id) OVER (PARTITION BY p.id) as total_visits,
+        MAX(a.appointment_date) OVER (PARTITION BY p.id) as last_visit
+      FROM patients p
+      JOIN appointments a ON p.id = a.patient_id
+      WHERE a.doctor_id = $1
+      ORDER BY p.id, last_visit DESC`,
+      [doctorId],
+    );
+
+    return {
+      totalCount: patients.length,
+      patients: patients.map((p) => ({
+        id: p.id,
+        name: p.full_name,
+        email: p.email,
+        phone: p.phone,
+        gender: p.gender,
+        dateOfBirth: p.date_of_birth,
+        address: p.address,
+        totalVisits: parseInt(p.total_visits),
+        lastVisit: p.last_visit,
+      })),
+    };
+  }
+
+  // ============================================
+  // GET DOCTOR PROFILE
+  // ============================================
+  async getProfile(doctorId: number) {
+    const doctor = await this.db.queryOne(
+      `SELECT 
+        d.id,
+        d.full_name,
+        d.email,
+        d.phone,
+        d.gender,
+        d.date_of_birth,
+        d.address,
+        d.specialization,
+        d.license_number,
+        d.created_at
+      FROM doctors d
+      WHERE d.id = $1`,
+      [doctorId],
+    );
+
+    if (!doctor) {
+      throw new NotFoundException('Doctor not found');
+    }
+
+    return {
+      id: doctor.id,
+      fullName: doctor.full_name,
+      email: doctor.email,
+      phone: doctor.phone,
+      gender: doctor.gender,
+      dateOfBirth: doctor.date_of_birth,
+      address: doctor.address,
+      specialization: doctor.specialization,
+      licenseNumber: doctor.license_number,
+      createdAt: doctor.created_at,
+    };
+  }
+
+  // ============================================
+  // UPDATE DOCTOR PROFILE
+  // ============================================
+  async updateProfile(
+    doctorId: number,
+    data: {
+      fullName?: string;
+      phone?: string;
+      gender?: string;
+      dateOfBirth?: string;
+      address?: string;
+      specialization?: string;
+    },
+  ) {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (data.fullName !== undefined) {
+      updates.push(`full_name = $${paramIndex++}`);
+      values.push(data.fullName);
+    }
+    if (data.phone !== undefined) {
+      updates.push(`phone = $${paramIndex++}`);
+      values.push(data.phone);
+    }
+    if (data.gender !== undefined) {
+      updates.push(`gender = $${paramIndex++}`);
+      values.push(data.gender);
+    }
+    if (data.dateOfBirth !== undefined) {
+      updates.push(`date_of_birth = $${paramIndex++}`);
+      values.push(data.dateOfBirth);
+    }
+    if (data.address !== undefined) {
+      updates.push(`address = $${paramIndex++}`);
+      values.push(data.address);
+    }
+    if (data.specialization !== undefined) {
+      updates.push(`specialization = $${paramIndex++}`);
+      values.push(data.specialization);
+    }
+
+    if (updates.length === 0) {
+      return this.getProfile(doctorId);
+    }
+
+    updates.push(`updated_at = NOW()`);
+    values.push(doctorId);
+
+    const updated = await this.db.queryOne(
+      `UPDATE doctors SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      values,
+    );
+
+    return {
+      id: updated.id,
+      fullName: updated.full_name,
+      email: updated.email,
+      phone: updated.phone,
+      gender: updated.gender,
+      dateOfBirth: updated.date_of_birth,
+      address: updated.address,
+      specialization: updated.specialization,
+      licenseNumber: updated.license_number,
+      createdAt: updated.created_at,
+    };
+  }
+
+  // ============================================
+  // GET PATIENT VISIT HISTORY
+  // ============================================
+  async getPatientHistory(doctorId: number, patientId: number) {
+    const appointments = await this.db.query(
+      `SELECT 
+        a.id,
+        a.appointment_code,
+        a.appointment_date,
+        a.appointment_time,
+        a.status,
+        a.reason_for_visit,
+        a.notes
+      FROM appointments a
+      WHERE a.doctor_id = $1
+      AND a.patient_id = $2
+      ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
+      [doctorId, patientId],
+    );
+
+    return {
+      totalCount: appointments.length,
+      visits: appointments.map((a) => ({
+        id: a.id,
+        code: a.appointment_code,
+        date: a.appointment_date,
+        time: this.formatTime(a.appointment_time?.substring(0, 5)),
+        status: a.status,
+        reason: a.reason_for_visit,
+        notes: a.notes,
+      })),
+    };
+  }
+
+  // ============================================
   // UPDATE APPOINTMENT STATUS
   // ============================================
   async updateAppointmentStatus(

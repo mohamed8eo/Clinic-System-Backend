@@ -1,0 +1,35 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Build output
+dist
+coverage
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+
+# Tests
+test
+**/*.spec.ts
+
+# Drizzle
+drizzle
+drizzle.config.ts

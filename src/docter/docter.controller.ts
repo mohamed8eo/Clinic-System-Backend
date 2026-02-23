@@ -14,12 +14,38 @@ import {
 import { DocterService } from './docter.service';
 import { CurrentUser } from 'src/auth/decorator/CurrentUser.decorator';
 import type { UserFromJwt } from 'src/auth/types/UserFromJwt';
-import { AdminGuard } from 'src/auth/guards/admin-guard/admin-guard.guard';
+import { DoctorGuard } from 'src/auth/guards/doctor-guard/doctor-guard.guard';
 
-@UseGuards(AdminGuard)
+@UseGuards(DoctorGuard)
 @Controller('doctor')
 export class DocterController {
   constructor(private readonly docterService: DocterService) {}
+
+  // ============================================
+  // PROFILE ENDPOINTS
+  // ============================================
+
+  // GET /doctor/profile
+  @Get('profile')
+  async getProfile(@CurrentUser() user: UserFromJwt) {
+    return await this.docterService.getProfile(user.userId);
+  }
+
+  // PATCH /doctor/profile
+  @Patch('profile')
+  async updateProfile(
+    @CurrentUser() user: UserFromJwt,
+    @Body() body: {
+      fullName?: string;
+      phone?: string;
+      gender?: string;
+      dateOfBirth?: string;
+      address?: string;
+      specialization?: string;
+    },
+  ) {
+    return await this.docterService.updateProfile(user.userId, body);
+  }
 
   // ============================================
   // DASHBOARD STATS
@@ -109,6 +135,25 @@ export class DocterController {
     @Query('period') period: 'day' | 'week' | 'month' | 'year' = 'day',
   ) {
     return await this.docterService.getReport(user.userId, period);
+  }
+
+  // ============================================
+  // PATIENTS ENDPOINTS
+  // ============================================
+
+  // GET /doctor/patients
+  @Get('patients')
+  async getPatients(@CurrentUser() user: UserFromJwt) {
+    return await this.docterService.getPatients(user.userId);
+  }
+
+  // GET /doctor/patients/:id/history
+  @Get('patients/:id/history')
+  async getPatientHistory(
+    @CurrentUser() user: UserFromJwt,
+    @Param('id', ParseIntPipe) patientId: number,
+  ) {
+    return await this.docterService.getPatientHistory(user.userId, patientId);
   }
 
   // ============================================

@@ -525,9 +525,10 @@ export class PatientService {
 
   // Validate 2 hour restriction
   private validateTimeRestriction(booking: any) {
-    const bookingDate = booking.appointment_date instanceof Date
-      ? booking.appointment_date.toISOString().split('T')[0]
-      : booking.appointment_date;
+    const bookingDate =
+      booking.appointment_date instanceof Date
+        ? booking.appointment_date.toISOString().split('T')[0]
+        : booking.appointment_date;
 
     const bookingTime = booking.appointment_time.substring(0, 5);
     const appointmentDateTime = new Date(`${bookingDate}T${bookingTime}:00`);
@@ -543,9 +544,10 @@ export class PatientService {
 
   // Format booking response
   private formatBooking(booking: any) {
-    const bookingDate = booking.appointment_date instanceof Date
-      ? booking.appointment_date.toISOString().split('T')[0]
-      : booking.appointment_date;
+    const bookingDate =
+      booking.appointment_date instanceof Date
+        ? booking.appointment_date.toISOString().split('T')[0]
+        : booking.appointment_date;
 
     return {
       id: booking.id,
@@ -602,11 +604,11 @@ export class PatientService {
   // Get status badge info
   private getStatusBadge(status: string) {
     const badges: Record<string, { color: string; label: string }> = {
-      booked:    { color: 'blue',   label: 'Booked'    },
-      confirmed: { color: 'teal',   label: 'Confirmed' },
-      completed: { color: 'green',  label: 'Completed' },
-      cancelled: { color: 'red',    label: 'Cancelled' },
-      no_show:   { color: 'gray',   label: 'No Show'   },
+      booked: { color: 'blue', label: 'Booked' },
+      confirmed: { color: 'teal', label: 'Confirmed' },
+      completed: { color: 'green', label: 'Completed' },
+      cancelled: { color: 'red', label: 'Cancelled' },
+      no_show: { color: 'gray', label: 'No Show' },
     };
     return badges[status] || { color: 'gray', label: status };
   }
@@ -639,5 +641,341 @@ export class PatientService {
     }
 
     return slots;
+  }
+
+  // ============================================
+  // GET PATIENT PROFILE
+  // ============================================
+  async getProfile(patientId: number) {
+    const patient = await this.db.queryOne(
+      `SELECT 
+      id,
+      email,
+      full_name,
+      phone,
+      date_of_birth,
+      gender,
+      address,
+      profile_picture,
+      created_at,
+      updated_at
+     FROM patients 
+     WHERE id = $1`,
+      [patientId],
+    );
+
+    if (!patient) {
+      throw new NotFoundException('Patient not found');
+    }
+
+    // Calculate age from date of birth
+    const age = this.calculateAge(patient.date_of_birth);
+
+    return {
+      id: patient.id,
+      email: patient.email,
+      fullName: patient.full_name,
+      phone: patient.phone,
+      dateOfBirth: patient.date_of_birth,
+      age: age,
+      gender: patient.gender,
+      address: patient.address,
+      profilePicture: patient.profile_picture,
+      role: 'patient',
+      createdAt: patient.created_at,
+      updatedAt: patient.updated_at,
+    };
+  }
+
+  // ============================================
+  // GET PATIENT STATISTICS
+  // ============================================
+  async getPatientStats(patientId: number) {
+    // Get appointment statistics
+    const stats = await this.db.queryOne(
+      `SELECT
+      COUNT(*) as total_appointments,
+      COUNT(*) FILTER (WHERE status = 'completed') as completed,
+      COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+      COUNT(*) FILTER (WHERE status = 'booked') as booked,
+      COUNT(*) FILTER (WHERE status = 'confirmed') as confirmed,
+      COUNT(*) FILTER (WHERE status = 'no_show') as no_show,
+      COUNT(DISTINCT doctor_id) as unique_doctors,
+      COUNT(*) FILTER (
+        WHERE appointment_date >= CURRENT_DATE
+        AND status NOT IN ('cancelled', 'no_show')
+      ) as upcoming_appointments,
+      MIN(appointment_date) as first_appointment_date,
+      MAX(appointment_date) as last_appointment_date
+     FROM appointments
+     WHERE patient_id = $1`,
+      [patientId],
+    );
+
+    // Get most visited specializations
+    const topSpecializations = await this.db.query(
+      `SELECT 
+      d.specialization,
+      COUNT(*) as visit_count
+     FROM appointments a
+     JOIN doctors d ON a.doctor_id = d.id
+     WHERE a.patient_id = $1
+     AND a.status = 'completed'
+     GROUP BY d.specialization
+     ORDER BY visit_count DESC
+     LIMIT 3`,
+      [patientId],
+    );
+
+    // Get most visited doctors
+    const topDoctors = await this.db.query(
+      `SELECT 
+      d.id,
+      d.full_name,
+      d.specialization,
+      d.profile_picture,
+      COUNT(*) as visit_count
+     FROM appointments a
+     JOIN doctors d ON a.doctor_id = d.id
+     WHERE a.patient_id = $1
+     AND a.status = 'completed'
+     GROUP BY d.id, d.full_name, d.specialization, d.profile_picture
+     ORDER BY visit_count DESC
+     LIMIT 3`,
+      [patientId],
+    );
+
+    return {
+      appointments: {
+        total: parseInt(stats.total_appointments) || 0,
+        completed: parseInt(stats.completed) || 0,
+        cancelled: parseInt(stats.cancelled) || 0,
+        booked: parseInt(stats.booked) || 0,
+        confirmed: parseInt(stats.confirmed) || 0,
+        noShow: parseInt(stats.no_show) || 0,
+        upcoming: parseInt(stats.upcoming_appointments) || 0,
+      },
+      doctors: {
+        uniqueDoctorsVisited: parseInt(stats.unique_doctors) || 0,
+        topDoctors: topDoctors.map((d) => ({
+          id: d.id,
+          name: d.full_name,
+          specialization: d.specialization,
+          profilePicture: d.profile_picture,
+          visitCount: parseInt(d.visit_count),
+        })),
+      },
+      specializations: {
+        topSpecializations: topSpecializations.map((s) => ({
+          name: s.specialization,
+          visitCount: parseInt(s.visit_count),
+        })),
+      },
+      timeline: {
+        firstAppointment: stats.first_appointment_date,
+        lastAppointment: stats.last_appointment_date,
+        memberSince: null, // Will be added from patient created_at
+      },
+    };
+  }
+
+  // ============================================
+  // GET COMPLETE PATIENT INFO (Profile + Stats)
+  // ============================================
+  async getCompletePatientInfo(patientId: number) {
+    // Get profile
+    const profile = await this.getProfile(patientId);
+
+    // Get statistics
+    const stats = await this.getPatientStats(patientId);
+
+    // Add member since to timeline
+    stats.timeline.memberSince = profile.createdAt;
+
+    return {
+      profile,
+      statistics: stats,
+    };
+  }
+
+  // ============================================
+  // GET PATIENT MEDICAL HISTORY SUMMARY
+  // ============================================
+  async getMedicalHistorySummary(patientId: number) {
+    // Get all completed appointments with notes
+    const appointments = await this.db.query(
+      `SELECT 
+      a.id,
+      a.appointment_date,
+      a.appointment_time,
+      a.reason_for_visit,
+      a.notes,
+      d.full_name as doctor_name,
+      d.specialization
+     FROM appointments a
+     JOIN doctors d ON a.doctor_id = d.id
+     WHERE a.patient_id = $1
+     AND a.status = 'completed'
+     AND a.notes IS NOT NULL
+     ORDER BY a.appointment_date DESC, a.appointment_time DESC
+     LIMIT 10`,
+      [patientId],
+    );
+
+    return {
+      totalRecords: appointments.length,
+      recentVisits: appointments.map((apt) => ({
+        id: apt.id,
+        date: apt.appointment_date,
+        time: this.formatTime(apt.appointment_time?.substring(0, 5)),
+        reasonForVisit: apt.reason_for_visit,
+        doctorNotes: apt.notes,
+        doctor: {
+          name: apt.doctor_name,
+          specialization: apt.specialization,
+        },
+      })),
+    };
+  }
+
+  // ============================================
+  // UPDATE PATIENT PROFILE
+  // ============================================
+  async updateProfile(
+    patientId: number,
+    updateData: {
+      fullName?: string;
+      phone?: string;
+      dateOfBirth?: string;
+      gender?: string;
+      address?: string;
+    },
+  ) {
+    // Verify patient exists
+    await this.getProfile(patientId);
+
+    // Build dynamic update query
+    const fields: string[] = [];
+    const values: (string | number | null)[] = [];
+    let paramCount = 1;
+
+    if (updateData.fullName) {
+      fields.push(`full_name = $${paramCount++}`);
+      values.push(updateData.fullName.trim());
+    }
+    if (updateData.phone) {
+      fields.push(`phone = $${paramCount++}`);
+      values.push(updateData.phone.trim());
+    }
+    if (updateData.dateOfBirth) {
+      fields.push(`date_of_birth = $${paramCount++}`);
+      values.push(updateData.dateOfBirth);
+    }
+    if (updateData.gender) {
+      fields.push(`gender = $${paramCount++}`);
+      values.push(updateData.gender);
+    }
+    if (updateData.address !== undefined) {
+      fields.push(`address = $${paramCount++}`);
+      values.push(updateData.address?.trim() || null);
+    }
+
+    if (fields.length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    values.push(patientId);
+    const sql = `
+    UPDATE patients 
+    SET ${fields.join(', ')}, updated_at = NOW()
+    WHERE id = $${paramCount}
+    RETURNING id, email, full_name, phone, date_of_birth, gender, address, profile_picture, created_at, updated_at
+  `;
+
+    const updated = await this.db.queryOne(sql, values);
+
+    const age = this.calculateAge(updated.date_of_birth);
+
+    return {
+      success: true,
+      message: 'Profile updated successfully',
+      profile: {
+        id: updated.id,
+        email: updated.email,
+        fullName: updated.full_name,
+        phone: updated.phone,
+        dateOfBirth: updated.date_of_birth,
+        age: age,
+        gender: updated.gender,
+        address: updated.address,
+        profilePicture: updated.profile_picture,
+        role: 'patient',
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+      },
+    };
+  }
+
+  // ============================================
+  // UPDATE PROFILE PICTURE
+  // ============================================
+  async updateProfilePicture(patientId: number, imageUrl: string) {
+    const updated = await this.db.queryOne(
+      `UPDATE patients 
+     SET profile_picture = $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING id, email, full_name, profile_picture`,
+      [imageUrl, patientId],
+    );
+
+    if (!updated) {
+      throw new NotFoundException('Patient not found');
+    }
+
+    return {
+      success: true,
+      message: 'Profile picture updated successfully',
+      profilePicture: updated.profile_picture,
+    };
+  }
+
+  // ============================================
+  // DELETE PROFILE PICTURE
+  // ============================================
+  async deleteProfilePicture(patientId: number) {
+    const updated = await this.db.queryOne(
+      `UPDATE patients 
+     SET profile_picture = NULL, updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+      [patientId],
+    );
+
+    if (!updated) {
+      throw new NotFoundException('Patient not found');
+    }
+
+    return {
+      success: true,
+      message: 'Profile picture removed successfully',
+    };
+  }
+
+  // ============================================
+  // HELPER METHODS
+  // ============================================
+
+  // Calculate age from date of birth
+  private calculateAge(dateOfBirth: Date | string): number {
+    const dob = new Date(dateOfBirth);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const monthDiff = today.getMonth() - dob.getMonth();
+
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+      age--;
+    }
+
+    return age;
   }
 }
