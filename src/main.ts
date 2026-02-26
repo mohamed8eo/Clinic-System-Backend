@@ -9,6 +9,7 @@ async function bootstrap() {
       'http://localhost:8080',
       'http://localhost:5173',
       'https://medicarecloud.lovable.app',
+      'https://medi-care-clinic.vercel.app',
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
